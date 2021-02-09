@@ -1,0 +1,8 @@
+[package]
+name = "gpp-solver"
+version = "0.1.0"
+authors = ["Carol Schulze <carol@ereski.org>"]
+edition = "2018"
+
+[dependencies]
+derive_more = { version = "0.99.11", default-features = false, features = ["from", "into"] }
