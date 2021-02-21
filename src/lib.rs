@@ -82,8 +82,6 @@ pub trait Problem {
 
     /// Fill `dependencies` with the direct dependencies of `id`. The output
     /// vector is guaranteed to be empty when this method is called.
-    ///
-    /// This method is never called more than once with the same fragment.
     fn direct_dependencies(
         &self,
         id: FragmentId,
