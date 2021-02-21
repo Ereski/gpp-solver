@@ -47,31 +47,31 @@
 //!   are part of cycles will naturally be punted and never considered again
 //!   unless the cycle is explicitly broken.
 
-#![cfg_attr(not(std), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
 
 use derive_more::{From, Into};
 
-#[cfg(std)]
+#[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-#[cfg(not(std))]
+#[cfg(not(feature = "std"))]
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     vec::Vec,
 };
-#[cfg(not(std))]
+#[cfg(not(feature = "std"))]
 use core::iter::{IntoIterator, Iterator};
 
-#[cfg(std)]
+#[cfg(feature = "std")]
 type Map<K, V> = HashMap<K, V>;
-#[cfg(std)]
+#[cfg(feature = "std")]
 type Set<T> = HashSet<T>;
 
-#[cfg(not(std))]
+#[cfg(not(feature = "std"))]
 type Map<K, V> = BTreeMap<K, V>;
-#[cfg(not(std))]
+#[cfg(not(feature = "std"))]
 type Set<T> = BTreeSet<T>;
 
 /// Trait implemented by objects that define a specific problem to be solved by
@@ -107,7 +107,7 @@ pub trait Problem {
 pub struct FragmentId(pub usize);
 
 /// Solver for a specific [`Problem`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Solver<P> {
     // TODO: these should be copy-on-write to make cloning cheap
     to_solve: Set<FragmentId>,
@@ -225,9 +225,6 @@ where
     ///
     /// Returns `false` if there are no more fragments that can be evaluated.
     pub fn step(&mut self) -> Result<bool, P::Error> {
-        #[cfg(std)]
-        let item = self.to_solve.pop();
-        #[cfg(not(std))]
         let item = self
             .to_solve
             .iter()
