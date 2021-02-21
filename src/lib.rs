@@ -136,6 +136,11 @@ impl<P> Solver<P> {
         }
     }
 
+    /// Consume `self` and return the wrapped [`Problem`] instance.
+    pub fn into_problem(self) -> P {
+        self.problem
+    }
+
     /// Get the current [`Status`] of the solver.
     pub fn status(&self) -> Status {
         if self.to_solve.is_empty() {
