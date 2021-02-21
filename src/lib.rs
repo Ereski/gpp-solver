@@ -153,8 +153,10 @@ impl<P> Solver<P> {
     ///
     /// Only fragments enqueued through this method and their transitive
     /// dependencies will be considered for evaluation.
-    pub fn enqueue_fragment(&mut self, id: FragmentId) {
+    pub fn enqueue_fragment(&mut self, id: FragmentId) -> &mut Self {
         self.to_solve.insert(id);
+
+        self
     }
 
     /// Get an interator to all fragments that are currently punted.
@@ -175,8 +177,10 @@ where
     P: Problem,
 {
     /// Assume the given fragment is already evaluated.
-    pub fn assume_evaluated(&mut self, id: FragmentId) {
-        self.mark_solved(id)
+    pub fn assume_evaluated(&mut self, id: FragmentId) -> &mut Self {
+        self.mark_solved(id);
+
+        self
     }
 
     /// Create a clone of `self` that assumes some fragments are already
