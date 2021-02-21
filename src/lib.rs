@@ -74,6 +74,9 @@ type Map<K, V> = BTreeMap<K, V>;
 #[cfg(not(feature = "std"))]
 type Set<T> = BTreeSet<T>;
 
+#[cfg(test)]
+mod test;
+
 /// Trait implemented by objects that define a specific problem to be solved by
 /// the [`Solver`].
 pub trait Problem {
@@ -284,7 +287,10 @@ where
         self.punted.insert(id, self.dependencies.len());
 
         for dependency in self.dependencies.iter().copied() {
-            if !self.solved.contains(&dependency) {
+            if dependency != id
+                && !self.solved.contains(&dependency)
+                && !self.punted.contains_key(&dependency)
+            {
                 self.to_solve.insert(dependency);
             }
             self.pending_on.entry(dependency).or_default().push(id);
