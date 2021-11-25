@@ -1,16 +1,21 @@
 [package]
 name = "gpp-solver"
 version = "0.1.0"
+description = "A small hybrid push-pull solver/planner that has the best of both worlds"
+repository = "https://github.com/Ereski/gpp-solver"
 authors = ["Carol Schulze <carol@ereski.org>"]
-edition = "2018"
+license = "BSD-2-Clause"
+keywords = ["solver", "logic", "reactive", "no-std", "graph"]
+categories = ["algorithms", "no-std"]
+edition = "2021"
 
 [features]
 default = ["std"]
 std = []
 
 [dependencies]
-derive_more = { version = "0.99.11", default-features = false, features = ["from", "into"] }
+derive_more = { version = "0.99.16", default-features = false, features = ["from", "into"] }
 
 [dev-dependencies]
-petgraph = { version = "0.5.1", default-features = false }
+petgraph = { version = "0.6.0", default-features = false }
 void = "1.0.2"
