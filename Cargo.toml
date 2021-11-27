@@ -1,6 +1,6 @@
 [package]
 name = "gpp-solver"
-version = "0.1.0"
+version = "0.2.0"
 description = "A small hybrid push-pull solver/planner that has the best of both worlds"
 repository = "https://github.com/Ereski/gpp-solver"
 authors = ["Carol Schulze <carol@ereski.org>"]
@@ -10,12 +10,32 @@ categories = ["algorithms", "no-std"]
 edition = "2021"
 
 [features]
-default = ["std"]
+# By default we compile an async crate that uses `futures` async locks under a
+# normal std environment.
+default = ["std", "futures-lock"]
+
+# Use std types. If not set, we still require the `alloc` crate for `no_std`.
 std = []
 
+# Use `futures`'s locks.
+futures-lock = []
+
+# Use `tokio`'s locks.
+tokio-lock = ["tokio"]
+
+# Use `async-std`'s locks.
+async-std-lock = ["async-lock"]
+
 [dependencies]
+async-lock = { version = "2.4.0", optional = true, default-features = false }
+async-trait = { version = "0.1.51", default-features = false }
 derive_more = { version = "0.99.16", default-features = false, features = ["from", "into"] }
+futures = { version = "0.3.18", default-features = false, features = ["std"] }
+tokio = { version = "1.14.0", optional = true, default-features = false, features = ["sync"] }
 
 [dev-dependencies]
+async-std = { version = "1.10.0", features = ["attributes"] }
+futures-test = { version = "0.3.18", default-features = false, features = ["std"] }
 petgraph = { version = "0.6.0", default-features = false }
-void = "1.0.2"
+tokio = { version = "1.14.0", default-features = false, features = ["rt-multi-thread", "macros"] }
+void = { version = "1.0.2", default-features = false }

@@ -1,38 +1,44 @@
-use crate::{FragmentId, Problem};
+use crate::{
+    reexported::{Box, Mutex, NonZeroUsize, Set, Vec},
+    {FragmentId, Problem},
+};
+use async_trait::async_trait;
 use petgraph::{graph::NodeIndex, visit::EdgeRef, Directed, Graph};
-use std::collections::HashSet;
 use void::Void;
 
 mod cycles;
 mod sanity;
 mod tree;
 
+const CONCURRENCY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(2) };
+
 struct PetgraphProblem {
     dependency_graph: Graph<(), (), Directed>,
-    evaluation_order: Vec<NodeIndex<u32>>,
+    evaluation_order: Mutex<Vec<NodeIndex<u32>>>,
 }
 
 impl PetgraphProblem {
     fn new(dependency_graph: Graph<(), (), Directed>) -> Self {
         Self {
             dependency_graph,
-            evaluation_order: Vec::new(),
+            evaluation_order: Mutex::new(Vec::new()),
         }
     }
 
-    fn evaluated(&self) -> &[NodeIndex<u32>] {
-        &self.evaluation_order
+    fn into_evaluated(self) -> Vec<NodeIndex<u32>> {
+        self.evaluation_order.into_inner()
     }
 
-    fn evaluated_set(&self) -> HashSet<NodeIndex<u32>> {
-        self.evaluation_order.iter().copied().collect()
+    fn into_evaluated_set(self) -> Set<NodeIndex<u32>> {
+        self.evaluation_order.into_inner().into_iter().collect()
     }
 }
 
+#[async_trait]
 impl Problem for PetgraphProblem {
     type Error = Void;
 
-    fn direct_dependencies(
+    async fn direct_dependencies(
         &self,
         id: FragmentId,
         dependecies: &mut Vec<FragmentId>,
@@ -44,8 +50,11 @@ impl Problem for PetgraphProblem {
         )
     }
 
-    fn evaluate(&mut self, id: FragmentId) -> Result<(), Self::Error> {
-        self.evaluation_order.push(NodeIndex::new(id.into()));
+    async fn evaluate(&self, id: FragmentId) -> Result<(), Self::Error> {
+        self.evaluation_order
+            .lock()
+            .await
+            .push(NodeIndex::new(id.into()));
 
         Ok(())
     }

@@ -26,6 +26,13 @@
 //! haven't been met yet. If the solver is done, punted fragments must be are part of at least one
 //! cycle.
 //!
+//! # Concurrency
+//!
+//! [`Solver`] is fully asynchronous but the core algorithm is not parallel at the moment. Running
+//! multiple [`Solver::step`] concurrently or calling [`Solver::run`] with `concurrency > 1` will
+//! not make the solver itself run faster. What this does allow is for multiple
+//! [`Problem::direct_dependencies`] and [`Problem::evaluate`] calls to run concurrently.
+//!
 //! # Internals
 //!
 //! [`Solver`] implements a hybrid push-pull architecture. Fragments are only evaluated if needed
@@ -48,42 +55,42 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-extern crate alloc;
+macro_rules! feature_cfg {
+    (for $name:literal; $($item:item)*) => {
+        $(
+            #[cfg(feature = $name)]
+            $item
+        )*
+    };
+    (for !$name:literal; $($item:item)*) => {
+        $(
+            #[cfg(not(feature = $name))]
+            $item
+        )*
+    };
+}
 
+use async_trait::async_trait;
 use derive_more::{From, Into};
+use futures::stream::{FuturesUnordered, StreamExt};
+use reexported::{iter, Box, Map, Mutex, NonZeroUsize, Set, Vec};
 
-#[cfg(feature = "std")]
-use std::collections::{HashMap, HashSet};
-
-#[cfg(not(feature = "std"))]
-use alloc::{
-    collections::{BTreeMap, BTreeSet},
-    vec::Vec,
-};
-#[cfg(not(feature = "std"))]
-use core::iter::{IntoIterator, Iterator};
-
-#[cfg(feature = "std")]
-type Map<K, V> = HashMap<K, V>;
-#[cfg(feature = "std")]
-type Set<T> = HashSet<T>;
-
-#[cfg(not(feature = "std"))]
-type Map<K, V> = BTreeMap<K, V>;
-#[cfg(not(feature = "std"))]
-type Set<T> = BTreeSet<T>;
+pub mod reexported;
 
 #[cfg(test)]
 mod test;
 
 /// Trait implemented by objects that define a specific problem to be solved by the [`Solver`].
+///
+/// Use [`mod@async_trait`] to implement this trait.
+#[async_trait]
 pub trait Problem {
     /// Error type for [`Problem::evaluate`].
     type Error;
 
     /// Fill `dependencies` with the direct dependencies of `id`. The output vector is guaranteed
     /// to be empty when this method is called.
-    fn direct_dependencies(
+    async fn direct_dependencies(
         &self,
         id: FragmentId,
         dependecies: &mut Vec<FragmentId>,
@@ -95,7 +102,7 @@ pub trait Problem {
     /// See [`Solver::run`] and [`Solver::step`] on how evaluation failures are handled.
     ///
     /// This method is never called more than once with the same fragment.
-    fn evaluate(&mut self, id: FragmentId) -> Result<(), Self::Error>;
+    async fn evaluate(&self, id: FragmentId) -> Result<(), Self::Error>;
 }
 
 /// ID of a fragment.
@@ -106,45 +113,49 @@ pub trait Problem {
 pub struct FragmentId(pub usize);
 
 /// Hybrid push-pull solver.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Solver<P> {
+    state: Mutex<State>,
+    // This is a scratch vector we store here to reduce allocations
+    dependencies: Mutex<Vec<FragmentId>>,
+    problem_instance: P,
+}
+
+// POD struct
+struct State {
     // TODO: these should be an intrusive copy-on-write to make cloning and testing alternatives
     // cheap
     to_solve: Set<FragmentId>,
     pending_on: Map<FragmentId, Vec<FragmentId>>,
     punted: Map<FragmentId, usize>,
     solved: Set<FragmentId>,
-
-    // This is a scratch vector we store here to reduce allocations
-    dependencies: Vec<FragmentId>,
-
-    problem: P,
 }
 
 impl<P> Solver<P> {
     /// Create a new [`Solver`] instance for a [`Problem`] instance.
-    pub fn new(problem: P) -> Self {
+    pub fn new(problem_instance: P) -> Self {
         Self {
-            to_solve: Set::new(),
-            pending_on: Map::new(),
-            punted: Map::new(),
-            solved: Set::new(),
-
-            dependencies: Vec::new(),
-
-            problem,
+            state: Mutex::new(State {
+                to_solve: Set::new(),
+                pending_on: Map::new(),
+                punted: Map::new(),
+                solved: Set::new(),
+            }),
+            dependencies: Mutex::new(Vec::new()),
+            problem_instance,
         }
     }
 
     /// Consume `self` and return the wrapped [`Problem`] instance.
-    pub fn into_problem(self) -> P {
-        self.problem
+    pub fn into_problem_instance(self) -> P {
+        self.problem_instance
     }
 
     /// Get the current [`Status`] of the solver.
-    pub fn status(&self) -> Status {
-        if self.to_solve.is_empty() {
-            if self.punted.is_empty() {
+    pub async fn status(&self) -> Status {
+        let state = self.state.lock().await;
+
+        if state.to_solve.is_empty() {
+            if state.punted.is_empty() {
                 Status::Done
             } else {
                 Status::DoneWithCycles
@@ -158,8 +169,8 @@ impl<P> Solver<P> {
     ///
     /// Only fragments enqueued through this method and their transitive dependencies will be
     /// considered for evaluation.
-    pub fn enqueue_fragment(&mut self, id: FragmentId) -> &mut Self {
-        self.to_solve.insert(id);
+    pub async fn enqueue_fragment(&self, id: FragmentId) -> &Self {
+        self.state.lock().await.to_solve.insert(id);
 
         self
     }
@@ -170,8 +181,8 @@ impl<P> Solver<P> {
     /// - [`Status::Pending`]: fragments are pending on dependencies.
     /// - [`Status::DoneWithCycles`]: fragments are part of one or more cycles.
     /// - [`Status::Done`]: the returned iterator will be empty.
-    pub fn punted_iter(&self) -> impl Iterator<Item = FragmentId> + '_ {
-        self.punted.keys().copied()
+    pub async fn punted_iter(&self) -> Vec<FragmentId> {
+        self.state.lock().await.punted.keys().copied().collect()
     }
 }
 
@@ -180,16 +191,17 @@ where
     P: Problem,
 {
     /// Assume the given fragment is already evaluated.
-    pub fn assume_evaluated(&mut self, id: FragmentId) -> &mut Self {
-        self.mark_solved(id);
+    pub async fn assume_evaluated(&self, id: FragmentId) -> &Self {
+        self.mark_solved(id, &mut *self.state.lock().await);
 
         self
     }
 
+    /* TODO: rethink about cloning in general
     /// Create a clone of `self` that assumes some fragments are already evaluated.
     ///
     /// This method is useful for trying out assumptions that may need to be discarted.
-    pub fn clone_with_evaluation_assumptions<A>(
+    pub async fn clone_with_evaluation_assumptions<A>(
         &self,
         assume_evaluated: A,
     ) -> Self
@@ -197,31 +209,54 @@ where
         A: IntoIterator<Item = FragmentId>,
         P: Clone,
     {
-        let mut clone = self.clone();
+        let clone = self.clone();
         for id in assume_evaluated {
-            clone.assume_evaluated(id);
+            clone.assume_evaluated(id).await;
         }
 
         clone
     }
+    */
 
     /// Run the solver until all enqueued fragments and their transitive dependencies are either
-    /// solved or proven to be part of cycles.
+    /// solved or proven to be part of cycles. See the module docs for the limitations when
+    /// `concurrency > 1`.
     ///
     /// Returns an interator with all fragments that are part of at least one cycle, if any. See
     /// [`Solver::punted_iter`].
     ///
     /// Returns an error if any evaluation returns an error.
-    pub fn run(
-        &mut self,
-    ) -> Result<impl Iterator<Item = FragmentId> + '_, P::Error> {
+    ///
+    /// # Known Issues
+    ///
+    /// - If [`Solver::enqueue_fragment`] is called while [`Solver::run`] is executing, those new
+    ///   fragments may not be solved.
+    /// - If [`Solver::run`] returns with an error, the [`Solver`] may be left in an inconsistent
+    ///   state.
+    pub async fn run(
+        &self,
+        concurrency: NonZeroUsize,
+    ) -> Result<Vec<FragmentId>, P::Error> {
+        let mut steps = iter::repeat_with(|| self.step())
+            .take(concurrency.into())
+            .collect::<FuturesUnordered<_>>();
         loop {
-            match self.step() {
-                Ok(false) => return Ok(self.punted_iter()),
-                Ok(true) => (),
+            // Run a `parallelism` number of `step`s until one of them errors out or we evaluate
+            // all fragments
+            match steps.next().await.unwrap() {
+                Ok(false) => break,
+                Ok(true) => steps.push(self.step()),
                 Err(err) => return Err(err),
             }
         }
+        while let Some(res) = steps.next().await {
+            // Make sure all pending `step`s are evaluated to completion
+            if let Err(err) = res {
+                return Err(err);
+            }
+        }
+
+        Ok(self.punted_iter().await)
     }
 
     /// Run a single solver step for a single fragment.
@@ -229,36 +264,53 @@ where
     /// Returns `false` if there are no more fragments that can be evaluated.
     ///
     /// Returns an error if [`Problem::evaluate`] was called and evaluation returned an error.
-    pub fn step(&mut self) -> Result<bool, P::Error> {
-        let item = self
-            .to_solve
-            .iter()
-            .next()
-            .copied()
-            .map(|x| self.to_solve.take(&x).unwrap());
+    ///
+    /// # Known Issues
+    ///
+    /// - If [`Solver::step`] is not run to completion the [`Solver`] may be left in an
+    ///   inconsistent state.
+    pub async fn step(&self) -> Result<bool, P::Error> {
+        let item = {
+            let mut state = self.state.lock().await;
+
+            state
+                .to_solve
+                .iter()
+                .next()
+                .copied()
+                .map(|x| state.to_solve.take(&x).unwrap())
+        };
 
         match item {
             Some(id) => {
-                self.dependencies.clear();
-                self.problem.direct_dependencies(id, &mut self.dependencies);
+                let mut dependencies = self.dependencies.lock().await;
+                dependencies.clear();
+                self.problem_instance
+                    .direct_dependencies(id, &mut dependencies)
+                    .await;
+                let mut state = self.state.lock().await;
+                dependencies.retain(|x| !state.solved.contains(x));
 
-                // This is a bit more boilerplatery due to borrowing rules
-                {
-                    let solved = &self.solved;
-                    self.dependencies.retain(|x| !solved.contains(x));
-                }
+                if dependencies.is_empty() {
+                    // Drop all locks before calling `evaluate`to allow other calls to `step` to
+                    // progress while `evaluate` is running. And we only need to lock `self.state`
+                    // again if `evaluate` is successful
+                    drop(dependencies);
+                    drop(state);
 
-                if self.dependencies.is_empty() {
-                    match self.problem.evaluate(id) {
+                    match self.problem_instance.evaluate(id).await {
                         Ok(()) => {
-                            self.mark_solved(id);
+                            // TODO: take a deeper look here to make sure there are no possible
+                            // race condition between dropping the state lock and locking it again
+                            // here
+                            self.mark_solved(id, &mut *self.state.lock().await);
 
                             Ok(true)
                         }
                         Err(err) => Err(err),
                     }
                 } else {
-                    self.mark_punted(id);
+                    self.mark_punted(id, &dependencies, &mut state);
 
                     Ok(true)
                 }
@@ -267,32 +319,37 @@ where
         }
     }
 
-    fn mark_solved(&mut self, id: FragmentId) {
-        self.solved.insert(id);
+    fn mark_solved(&self, id: FragmentId, state: &mut State) {
+        state.solved.insert(id);
 
-        if let Some(dependents) = self.pending_on.remove(&id) {
+        if let Some(dependents) = state.pending_on.remove(&id) {
             for dependent in dependents {
-                if *self.punted.get(&dependent).unwrap() == 1 {
-                    self.punted.remove(&dependent);
-                    self.to_solve.insert(dependent);
+                if *state.punted.get(&dependent).unwrap() == 1 {
+                    state.punted.remove(&dependent);
+                    state.to_solve.insert(dependent);
                 } else {
-                    *self.punted.get_mut(&dependent).unwrap() -= 1;
+                    *state.punted.get_mut(&dependent).unwrap() -= 1;
                 }
             }
         }
     }
 
-    fn mark_punted(&mut self, id: FragmentId) {
-        self.punted.insert(id, self.dependencies.len());
+    fn mark_punted(
+        &self,
+        id: FragmentId,
+        dependencies: &[FragmentId],
+        state: &mut State,
+    ) {
+        state.punted.insert(id, dependencies.len());
 
-        for dependency in self.dependencies.iter().copied() {
+        for dependency in dependencies.iter().copied() {
             if dependency != id
-                && !self.solved.contains(&dependency)
-                && !self.punted.contains_key(&dependency)
+                && !state.solved.contains(&dependency)
+                && !state.punted.contains_key(&dependency)
             {
-                self.to_solve.insert(dependency);
+                state.to_solve.insert(dependency);
             }
-            self.pending_on.entry(dependency).or_default().push(id);
+            state.pending_on.entry(dependency).or_default().push(id);
         }
     }
 }
