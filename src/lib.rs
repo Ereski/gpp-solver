@@ -55,6 +55,23 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+// Only used when testing
+#[cfg(test)]
+macro_rules! family_cfg {
+    (for $name:literal; $($item:item)*) => {
+        $(
+            #[cfg(target_family = $name)]
+            $item
+        )*
+    };
+    (for !$name:literal; $($item:item)*) => {
+        $(
+            #[cfg(not(target_family = $name))]
+            $item
+        )*
+    };
+}
+
 macro_rules! feature_cfg {
     (for $name:literal; $($item:item)*) => {
         $(
@@ -70,12 +87,15 @@ macro_rules! feature_cfg {
     };
 }
 
+use crate::reexported::{iter, Box, Map, Mutex, NonZeroUsize, Set, Vec};
 use async_trait::async_trait;
 use derive_more::{From, Into};
 use futures::stream::{FuturesUnordered, StreamExt};
-use reexported::{iter, Box, Map, Mutex, NonZeroUsize, Set, Vec};
 
 pub mod reexported;
+
+#[cfg(all(feature = "js-bindings", target_family = "wasm"))]
+mod js;
 
 #[cfg(test)]
 mod test;

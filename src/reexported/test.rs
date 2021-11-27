@@ -1,17 +1,28 @@
-feature_cfg! {
-    for "futures-lock";
+family_cfg! {
+    for "wasm";
 
-    pub use futures_test::test;
+    // TODO: add `run_in_browser`
+    pub use wasm_bindgen_test::wasm_bindgen_test as test;
 }
 
-feature_cfg! {
-    for "tokio-lock";
+family_cfg! {
+    for !"wasm";
 
-    pub use tokio::test;
-}
+    feature_cfg! {
+        for "futures-lock";
 
-feature_cfg! {
-    for "async-std-lock";
+        pub use futures_test::test;
+    }
 
-    pub use async_std::test;
+    feature_cfg! {
+        for "tokio-lock";
+
+        pub use tokio::test;
+    }
+
+    feature_cfg! {
+        for "async-std-lock";
+
+        pub use async_std::test;
+    }
 }
