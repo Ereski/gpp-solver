@@ -34,6 +34,32 @@
 //! safe but will not make the solver itself run faster. What this does allow is for multiple
 //! [`Problem::direct_dependencies`] and [`Problem::evaluate`] calls to run concurrently.
 //!
+//! # Build Features
+//!
+//! This crate has multiple features. From those, there are three where users must specify exactly
+//! one of: `futures-lock`, `tokio-lock`, or `async-std-lock`. Use whichever is most convenient.
+//!
+//! ## `std`
+//!
+//! Use std. [`Solver::run`] will be unavailable if `std` is disabled. **TODO**: actually make
+//! this assertion true.
+//!
+//! ## `js-bindings`
+//!
+//! Build the JavaScript API if building for WASM.
+//!
+//! ## `futures-lock`
+//!
+//! Use the locks implemented by the `futures` crate.
+//!
+//! ## `tokio-lock`
+//!
+//! Use the locks implemented by the `tokio` crate.
+//!
+//! ## `async-std-lock`
+//!
+//! Use the locks implemented by the `async-lock` crate.
+//!
 //! # Internals
 //!
 //! [`Solver`] implements a hybrid push-pull architecture. Fragments are only evaluated if needed

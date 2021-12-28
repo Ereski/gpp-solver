@@ -14,25 +14,15 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 # By default we compile an async crate that uses `futures` async locks under a
-# normal std environment. JavaScript bindings are compiled by default in a
+# normal std environment. JavaScript bindings are compiled by default when in a
 # WASM environment.
 default = ["std", "futures-lock", "js-bindings"]
 
-# Use std types. If not set, we still require the `alloc` crate for `no_std`.
 std = ["wasm-bindgen/std"]
-
-# Use `futures`'s locks.
-futures-lock = []
-
-# Use `tokio`'s locks.
-tokio-lock = ["tokio"]
-
-# Use `async-std`'s locks.
-async-std-lock = ["async-lock"]
-
-# Compile bindings for JavaScript. Useful if this library is being used with
-# non-Rust languages in a WASM environment.
 js-bindings = []
+futures-lock = []
+tokio-lock = ["tokio"]
+async-std-lock = ["async-lock"]
 
 [dependencies]
 async-lock = { version = "2.4.0", optional = true, default-features = false }
