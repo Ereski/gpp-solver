@@ -8,7 +8,7 @@
 //!
 //! Macros:
 //!
-//! - [`format`]: rust's `format` macro. Can come from `std` or the `allog` crate.
+//! - [`format`]: rust's `format` macro. Can come from `std` or the `alloc` crate.
 //! - [`test`]: test macro for asynchronous code. Can come from `futures-test`, `tokio`, or the
 //!   `async-std` crates. Only available during testing.
 //!

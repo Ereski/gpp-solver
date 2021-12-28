@@ -4,33 +4,34 @@
 //! The implementation is a mix of push (eager) and pull (lazy) architectures with user-driven
 //! recursion.
 //!
-//! Functionality is centered on the [`Solver`] struct. Users records all *fragments* they want to
-//! evaluate and only those.  What *is* a fragment is arbitrary and the solver does not care. It
-//! may represent a variable, an action, an object, or anything else.
+//! Functionality is centered on the [`Solver`] struct. Users record all *fragments* they want to
+//! evaluate and only those. Fragments are represented by an integral [`FragmentId`], but what
+//! *is* a fragment is arbitrary and the solver does not care. It may represent a variable, an
+//! action, an object, or anything else.
 //!
 //! Users must also implement the [`Problem`] trait, which defines a dependency graph and an
 //! interface for evaluating fragments that the solver finds are both solvable and required. This
 //! dependency graph does not need to be complete or explicit, as long as implementors can return
-//! the direct dependencies of fragments as the solver explores this graph.
+//! the direct dependencies of specified fragments as the solver explores the dependency graph.
 //!
-//! [`Solver::run`] and [`Solver::step`] will incrementally explore the depedency graph, calling
+//! [`Solver::run`] and [`Solver::step`] will incrementally explore the depedency graph and call
 //! [`Problem::evaluate`] on fragments that have all of its dependencies met.
 //!
-//! In the end, all requested fragments will either have been evaluated or some of those will have
-//! been permanently punted (see next paragraph) due to being a part of a dependency cycle. The
-//! user may choose to report cycles as errors, or break them with [`Solver::assume_evaluated`] or
-//! [`Solver::clone_with_evaluation_assumptions`]. See also [`Solver::status`].
+//! In the end, all requested fragments will either have been evaluated or will be proven to be
+//! part of a dependency cycle. The user may choose to report cycles as errors, or break them with
+//! [`Solver::assume_evaluated`] or [`Solver::clone_with_evaluation_assumptions`]. See also
+//! [`Solver::status`].
 //!
 //! [`Solver::punted_iter`] will return an iterator yielding all fragments that have been *punted*
 //! so far. A punted fragment is one that has been considered for evaluation but its dependencies
-//! haven't been met yet. If the solver is done, punted fragments must be are part of at least one
+//! haven't been met yet. If the solver is done, punted fragments must be part of at least one
 //! cycle.
 //!
 //! # Concurrency
 //!
 //! [`Solver`] is fully asynchronous but the core algorithm is not parallel at the moment. Running
-//! multiple [`Solver::step`] concurrently or calling [`Solver::run`] with `concurrency > 1` will
-//! not make the solver itself run faster. What this does allow is for multiple
+//! multiple [`Solver::step`] concurrently or calling [`Solver::run`] with `concurrency > 1` is
+//! safe but will not make the solver itself run faster. What this does allow is for multiple
 //! [`Problem::direct_dependencies`] and [`Problem::evaluate`] calls to run concurrently.
 //!
 //! # Internals
@@ -44,14 +45,14 @@
 //! On the other hand, if a fragment is successfully evaluated, punted fragments that depend on it
 //! will be evaluated eagerly (push) if all other dependencies have also been evaluated.
 //!
-//! This architecture has three major advantages:
+//! This architecture has two major advantages:
 //!
 //! - It is lazy. Only fragments that are explicitly requested to be evaluated, and the fragments
 //!   those depend on, will be evaluated. And never more than once.
 //! - There is no need to explicitly detect nor handle cycles, unlike both pure push and pure
 //!   pull. Fragments that are part of cycles will naturally be punted and never considered again.
 //!   Unless the cycle is explicitly broken with [`Solver::assume_evaluated`] or
-//!   [`Solver::clone_with_evaluation_assumptions`].
+//!   [`Solver::clone_with_evaluation_assumptions`]. This enables a much simpler implementation.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -116,8 +117,8 @@ pub trait Problem {
         dependecies: &mut Vec<FragmentId>,
     );
 
-    /// Called by the solver to signal that a fragment has had all of its dependencies evaluated
-    /// and thus the fragment should be evaluated too.
+    /// Called by the solver to signal that a fragment has had all of its dependencies evaluated.
+    /// Thus, the fragment should be evaluated too.
     ///
     /// See [`Solver::run`] and [`Solver::step`] on how evaluation failures are handled.
     ///
@@ -151,7 +152,7 @@ struct State {
 }
 
 impl<P> Solver<P> {
-    /// Create a new [`Solver`] instance for a [`Problem`] instance.
+    /// Create a new [`Solver`] instance for a [`Problem`].
     pub fn new(problem_instance: P) -> Self {
         Self {
             state: Mutex::new(State {
@@ -239,8 +240,8 @@ where
     */
 
     /// Run the solver until all enqueued fragments and their transitive dependencies are either
-    /// solved or proven to be part of cycles. See the module docs for the limitations when
-    /// `concurrency > 1`.
+    /// solved or proven to be part of at least one cycle. See the module docs for the limitations
+    /// when `concurrency > 1`.
     ///
     /// Returns an interator with all fragments that are part of at least one cycle, if any. See
     /// [`Solver::punted_iter`].
@@ -377,11 +378,11 @@ where
 /// Current status of a [`Solver`] instance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Status {
-    /// All fragments have been successfully evaluated.
+    /// All fragments have been successfully evaluated and no cycles were found.
     Done,
 
-    /// All fragments that could be evaluated were evaluated, but there are still some that were
-    /// not due to being part of one or more dependency cycles.
+    /// All fragments that could be evaluated were evaluated, but some fragments were part of at
+    /// least one dependency cycle and thus could not be evaluated.
     DoneWithCycles,
 
     /// The solver is still running and there are still fragments that may be evaluated.
